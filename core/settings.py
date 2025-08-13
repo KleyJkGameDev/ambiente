@@ -39,7 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'products',  # Adicionando app produtos
-    'sales', #add app vendas
+    'sales.apps.SalesConfig', #carregar signals
 ]
 
 MIDDLEWARE = [
