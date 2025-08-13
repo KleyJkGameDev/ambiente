@@ -38,7 +38,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'products',  # Adicionando App 
+    'products',  # Adicionando app produtos
+    'sales', #add app vendas
 ]
 
 MIDDLEWARE = [
