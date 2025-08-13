@@ -1,0 +1,49 @@
+ambiente-main/
+└── ambiente-main/
+    ├── core/
+    │   ├── __pycache__/
+    │   │   ├── __init__.cpython-313.pyc
+    │   │   ├── settings.cpython-313.pyc
+    │   │   ├── urls.cpython-313.pyc
+    │   │   └── wsgi.cpython-313.pyc
+    │   ├── __init__.py
+    │   ├── asgi.py
+    │   ├── settings.py
+    │   ├── urls.py
+    │   └── wsgi.py
+    ├── documents/
+    │   ├── .~lock.iniciando_ambiente.docx#
+    │   ├── iniciando_ambiente.docx
+    │   └── resumo_edital
+    ├── products/
+    │   ├── __pycache__/
+    │   │   ├── __init__.cpython-313.pyc
+    │   │   ├── admin.cpython-313.pyc
+    │   │   ├── apps.cpython-313.pyc
+    │   │   └── models.cpython-313.pyc
+    │   ├── migrations/
+    │   │   ├── __pycache__/
+    │   │   │   ├── 0001_initial.cpython-313.pyc
+    │   │   │   ├── 0002_teste.cpython-313.pyc
+    │   │   │   ├── 0003_delete_teste.cpython-313.pyc
+    │   │   │   └── __init__.cpython-313.pyc
+    │   │   ├── 0001_initial.py
+    │   │   ├── 0002_teste.py
+    │   │   ├── 0003_delete_teste.py
+    │   │   └── __init__.py
+    │   ├── __init__.py
+    │   ├── admin.py
+    │   ├── apps.py
+    │   ├── models.py
+    │   ├── tests.py
+    │   └── views.py
+    ├── walmart/
+    │   ├── clean_data-02-partaa
+    │   ├── clean_data-02-partab
+    │   ├── Ecommerce_Consumer_Behavior_Analysis_Data.csv
+    │   ├── online_shoppers_intention.csv
+    │   ├── prim.py
+    │   └── walmart.py
+    ├── db.sqlite3
+    ├── download (1).csv
+    └── manage.py
