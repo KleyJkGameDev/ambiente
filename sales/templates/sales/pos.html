@@ -5,93 +5,125 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Caixa (POS)</title>
+  <!-- mantemos base.css do admin, mas vamos isolar nossos estilos -->
   <link rel="stylesheet" href="{% static 'admin/css/base.css' %}">
   <style>
-    body { max-width: 1100px; margin: 24px auto; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#f8fafc; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 16px; background: #fff; }
-    .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: end; }
-    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:0; background:#111827; color:#fff; cursor:pointer; }
-    .btn.secondary { background:#374151; }
-    .btn.ghost { background:#e5e7eb; color:#111827; }
-    table { width:100%; border-collapse: collapse; background:#fff; }
-    th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align:left; vertical-align: middle; }
-    th { font-weight:700; font-size:12px; text-transform:uppercase; color:#374151; }
-    .right { text-align:right; white-space:nowrap; }
-    .qty { width: 70px; }
-    .totalbox { border:1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
-    .totrow { display:flex; justify-content: space-between; margin: 6px 0; font-weight:600; }
-    .totrow.big { font-size:18px; }
-    select, input { width:100%; padding:10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
+    /* --- Escopo POS para evitar interferência do admin.css --- */
+    .pos { max-width: 1100px; margin: 24px auto; font: 14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#f8fafc; }
+    .pos .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 16px; background: #fff; }
+    .pos .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: end; }
+
+    .pos .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:0; background:#111827; color:#fff; cursor:pointer; text-decoration:none; }
+    .pos .btn.secondary { background:#374151; }
+    .pos .btn.ghost { background:#e5e7eb; color:#111827; }
+
+    .pos table { width:100%; border-collapse: collapse; background:#fff; }
+    .pos th, .pos td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align:left; vertical-align: middle; }
+    .pos th { font-weight:700; font-size:12px; text-transform:uppercase; color:#374151; }
+    .pos .right { text-align:right; white-space:nowrap; }
+    .pos .qty { width: 80px; }
+
+    .pos .totalbox { border:1px solid #e5e7eb; border-radius: 12px; padding: 12px; background:#fff; }
+    .pos .totrow { display:flex; justify-content: space-between; margin: 6px 0; font-weight:600; }
+    .pos .totrow.big { font-size:18px; }
+
+    /* Inputs/Selects: reset leve para não herdar estilos do admin */
+    .pos select,
+    .pos input[type="number"],
+    .pos input[type="text"] {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #fff;
+      color: #111827;
+      line-height: 1.3;
+      height: auto;
+      appearance: auto;
+      -webkit-appearance: menulist;
+      -moz-appearance: menulist;
+    }
+    .pos select:focus,
+    .pos input:focus {
+      outline: 2px solid #11182722;
+      border-color: #9ca3af;
+    }
+
+    /* evita que estilos de botão do admin “acinzentem” nossos links/botões */
+    .pos a.btn { opacity: 1 !important; }
   </style>
 </head>
 <body>
-  <h1>Caixa</h1>
-
   <!-- CSRF escondido para o JS pegar com segurança -->
   <form id="csrf-form" style="display:none;">
     {% csrf_token %}
   </form>
 
-  <!-- Seleção de produto -->
-  <div class="card">
-    <div class="row">
-      <div>
-        <label for="product-select" style="font-weight:700;">Produto</label>
-        <select id="product-select">
-          <option value="">Selecione e ENTER para adicionar…</option>
-          {% for p in products %}
-            <option value="{{ p.id }}">{{ p.title }}</option>
+  <div class="pos">
+    <h1>Caixa</h1>
+
+    <!-- Seleção de produto -->
+    <div class="card">
+      <div class="row">
+        <div>
+          <label for="product-select" style="font-weight:700;">Produto</label>
+          <select id="product-select">
+            <option value="">Selecione e ENTER para adicionar…</option>
+            {% for p in products %}
+              <option value="{{ p.id }}">{{ p.title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="quantity" style="font-weight:700;">Quantidade</label>
+          <input id="quantity" type="number" min="1" value="1" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn" id="btn-add" type="button">Adicionar (Enter)</button>
+        <a class="btn secondary" href="{% url 'admin:index' %}">Admin</a>
+      </div>
+    </div>
+
+    <!-- Itens da venda -->
+    <div class="card">
+      <table id="items-table">
+        <thead>
+          <tr>
+            <th style="width:45%;">Produto</th>
+            <th style="width:10%;">Qtd</th>
+            <th style="width:15%;" class="right">Preço</th>
+            <th style="width:15%;" class="right">Subtotal</th>
+            <th style="width:15%;" class="right"></th>
+          </tr>
+        </thead>
+        <tbody id="items-body">
+          {% for it in state.items %}
+          <tr data-id="{{ it.id }}">
+            <td>{{ it.title }}</td>
+            <td><input class="qty" type="number" min="1" value="{{ it.quantity }}" /></td>
+            <td class="right">R$ {{ it.unit|floatformat:2 }}</td>
+            <td class="right">R$ {{ it.line_total|floatformat:2 }}</td>
+            <td class="right"><button class="btn ghost btn-del" type="button">Remover</button></td>
+          </tr>
+          {% empty %}
+          <tr class="empty"><td colspan="5" style="text-align:center; color:#6b7280;">Sem itens</td></tr>
           {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="quantity" style="font-weight:700;">Quantidade</label>
-        <input id="quantity" type="number" min="1" value="1" />
-      </div>
+        </tbody>
+      </table>
     </div>
-    <div style="margin-top:10px;">
-      <button class="btn" id="btn-add">Adicionar (Enter)</button>
-      <a class="btn secondary" href="{% url 'admin:index' %}">Admin</a>
-    </div>
-  </div>
 
-  <!-- Itens da venda -->
-  <div class="card">
-    <table id="items-table">
-      <thead>
-        <tr>
-          <th style="width:45%;">Produto</th>
-          <th style="width:10%;">Qtd</th>
-          <th style="width:15%;" class="right">Preço</th>
-          <th style="width:15%;" class="right">Subtotal</th>
-          <th style="width:15%;" class="right"></th>
-        </tr>
-      </thead>
-      <tbody id="items-body">
-        {% for it in state.items %}
-        <tr data-id="{{ it.id }}">
-          <td>{{ it.title }}</td>
-          <td><input class="qty" type="number" min="1" value="{{ it.quantity }}" /></td>
-          <td class="right">R$ {{ it.unit|floatformat:2 }}</td>
-          <td class="right">R$ {{ it.line_total|floatformat:2 }}</td>
-          <td class="right"><button class="btn ghost btn-del">Remover</button></td>
-        </tr>
-        {% empty %}
-        <tr class="empty"><td colspan="5" style="text-align:center; color:#6b7280;">Sem itens</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Totais -->
-  <div class="row">
-    <div></div>
-    <div class="totalbox">
-      <div class="totrow"><span>Subtotal</span><span id="subtotal">R$ {{ state.subtotal|floatformat:2 }}</span></div>
-      <hr style="border:0; border-top:1px solid #e5e7eb; margin:10px 0;">
-      <div class="totrow big"><span>Total</span><span id="total">R$ {{ state.total|floatformat:2 }}</span></div>
-      <div style="margin-top:10px; text-align:right;">
-        <button class="btn" id="btn-finish">Finalizar venda</button>
+    <!-- Totais -->
+    <div class="row">
+      <div></div>
+      <div class="totalbox">
+        <div class="totrow"><span>Subtotal</span><span id="subtotal">R$ {{ state.subtotal|floatformat:2 }}</span></div>
+        <hr style="border:0; border-top:1px solid #e5e7eb; margin:10px 0;">
+        <div class="totrow big"><span>Total</span><span id="total">R$ {{ state.total|floatformat:2 }}</span></div>
+        <div style="margin-top:10px; text-align:right;">
+          <button class="btn" id="btn-finish" type="button">Finalizar venda</button>
+        </div>
       </div>
     </div>
   </div>
@@ -123,7 +155,7 @@
           method:'POST',
           headers: {
             'X-Requested-With':'XMLHttpRequest',
-            'X-CSRFToken': getCSRF(),              // <<< token correto
+            'X-CSRFToken': getCSRF(),
           },
           body: fd
         });
@@ -152,16 +184,16 @@
               <td><input class="qty" type="number" min="1" value="${it.quantity}"/></td>
               <td class="right">${fmt(it.unit)}</td>
               <td class="right">${fmt(it.line_total)}</td>
-              <td class="right"><button class="btn ghost btn-del">Remover</button></td>
+              <td class="right"><button class="btn ghost btn-del" type="button">Remover</button></td>
             `;
             tbody.appendChild(tr);
           });
         }
         subtotalEl.textContent = fmt(state.subtotal);
         totalEl.textContent = fmt(state.total);
+
+        // volta o foco para o select, mas sem mexer no valor
         sel.focus();
-        sel.selectedIndex = 0;
-        qty.value = 1;
       }
 
       async function addItem(){
@@ -169,7 +201,12 @@
         const q = Math.max(1, parseInt(qty.value||'1',10));
         if(!product_id) return;
         const data = await post("{% url 'sales:pos_add_item' %}", {product_id, quantity:q});
-        if(data.ok) render(data.state);
+        if(data.ok) {
+          render(data.state);
+          // limpa a seleção após adicionar
+          sel.selectedIndex = 0;
+          qty.value = 1;
+        }
       }
 
       async function updateQty(tr){
@@ -186,8 +223,20 @@
       }
 
       btnAdd.addEventListener('click', addItem);
-      sel.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); addItem(); }});
-      qty.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); addItem(); }});
+
+      // Ajuste: só intercepta Enter quando já tem produto escolhido
+      sel.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter' && sel.value){
+          e.preventDefault();
+          addItem();
+        }
+      });
+      qty.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter' && sel.value){
+          e.preventDefault();
+          addItem();
+        }
+      });
 
       tbody.addEventListener('change', (e)=>{
         if(e.target.classList.contains('qty')){
