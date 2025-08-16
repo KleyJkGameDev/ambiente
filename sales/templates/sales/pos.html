@@ -1,0 +1,215 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Caixa (POS)</title>
+  <link rel="stylesheet" href="{% static 'admin/css/base.css' %}">
+  <style>
+    body { max-width: 1100px; margin: 24px auto; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#f8fafc; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 16px; background: #fff; }
+    .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: end; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:0; background:#111827; color:#fff; cursor:pointer; }
+    .btn.secondary { background:#374151; }
+    .btn.ghost { background:#e5e7eb; color:#111827; }
+    table { width:100%; border-collapse: collapse; background:#fff; }
+    th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align:left; vertical-align: middle; }
+    th { font-weight:700; font-size:12px; text-transform:uppercase; color:#374151; }
+    .right { text-align:right; white-space:nowrap; }
+    .qty { width: 70px; }
+    .totalbox { border:1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
+    .totrow { display:flex; justify-content: space-between; margin: 6px 0; font-weight:600; }
+    .totrow.big { font-size:18px; }
+    select, input { width:100%; padding:10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }
+  </style>
+</head>
+<body>
+  <h1>Caixa</h1>
+
+  <!-- CSRF escondido para o JS pegar com segurança -->
+  <form id="csrf-form" style="display:none;">
+    {% csrf_token %}
+  </form>
+
+  <!-- Seleção de produto -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="product-select" style="font-weight:700;">Produto</label>
+        <select id="product-select">
+          <option value="">Selecione e ENTER para adicionar…</option>
+          {% for p in products %}
+            <option value="{{ p.id }}">{{ p.title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="quantity" style="font-weight:700;">Quantidade</label>
+        <input id="quantity" type="number" min="1" value="1" />
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <button class="btn" id="btn-add">Adicionar (Enter)</button>
+      <a class="btn secondary" href="{% url 'admin:index' %}">Admin</a>
+    </div>
+  </div>
+
+  <!-- Itens da venda -->
+  <div class="card">
+    <table id="items-table">
+      <thead>
+        <tr>
+          <th style="width:45%;">Produto</th>
+          <th style="width:10%;">Qtd</th>
+          <th style="width:15%;" class="right">Preço</th>
+          <th style="width:15%;" class="right">Subtotal</th>
+          <th style="width:15%;" class="right"></th>
+        </tr>
+      </thead>
+      <tbody id="items-body">
+        {% for it in state.items %}
+        <tr data-id="{{ it.id }}">
+          <td>{{ it.title }}</td>
+          <td><input class="qty" type="number" min="1" value="{{ it.quantity }}" /></td>
+          <td class="right">R$ {{ it.unit|floatformat:2 }}</td>
+          <td class="right">R$ {{ it.line_total|floatformat:2 }}</td>
+          <td class="right"><button class="btn ghost btn-del">Remover</button></td>
+        </tr>
+        {% empty %}
+        <tr class="empty"><td colspan="5" style="text-align:center; color:#6b7280;">Sem itens</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Totais -->
+  <div class="row">
+    <div></div>
+    <div class="totalbox">
+      <div class="totrow"><span>Subtotal</span><span id="subtotal">R$ {{ state.subtotal|floatformat:2 }}</span></div>
+      <hr style="border:0; border-top:1px solid #e5e7eb; margin:10px 0;">
+      <div class="totrow big"><span>Total</span><span id="total">R$ {{ state.total|floatformat:2 }}</span></div>
+      <div style="margin-top:10px; text-align:right;">
+        <button class="btn" id="btn-finish">Finalizar venda</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const $ = (s, el=document) => el.querySelector(s);
+      const $$ = (s, el=document) => Array.from(el.querySelectorAll(s));
+
+      const sel = $('#product-select');
+      const qty = $('#quantity');
+      const btnAdd = $('#btn-add');
+      const tbody = $('#items-body');
+      const subtotalEl = $('#subtotal');
+      const totalEl = $('#total');
+
+      // pega o CSRF do input escondido gerado por {% csrf_token %}
+      function getCSRF() {
+        const inp = document.querySelector('#csrf-form input[name=csrfmiddlewaretoken]');
+        return inp ? inp.value : '';
+      }
+
+      function fmt(n){ return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n||0)); }
+
+      async function post(url, data) {
+        const fd = new FormData();
+        Object.entries(data || {}).forEach(([k,v])=>fd.append(k, v));
+        const r = await fetch(url, {
+          method:'POST',
+          headers: {
+            'X-Requested-With':'XMLHttpRequest',
+            'X-CSRFToken': getCSRF(),              // <<< token correto
+          },
+          body: fd
+        });
+        if(!r.ok) throw new Error('request failed');
+        return await r.json();
+      }
+
+      function render(state) {
+        tbody.innerHTML = '';
+        if (!state.items || state.items.length === 0) {
+          const tr = document.createElement('tr');
+          tr.className = 'empty';
+          const td = document.createElement('td');
+          td.colSpan = 5;
+          td.style.textAlign = 'center';
+          td.style.color = '#6b7280';
+          td.textContent = 'Sem itens';
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+        } else {
+          state.items.forEach(it => {
+            const tr = document.createElement('tr');
+            tr.dataset.id = it.id;
+            tr.innerHTML = `
+              <td>${it.title}</td>
+              <td><input class="qty" type="number" min="1" value="${it.quantity}"/></td>
+              <td class="right">${fmt(it.unit)}</td>
+              <td class="right">${fmt(it.line_total)}</td>
+              <td class="right"><button class="btn ghost btn-del">Remover</button></td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+        subtotalEl.textContent = fmt(state.subtotal);
+        totalEl.textContent = fmt(state.total);
+        sel.focus();
+        sel.selectedIndex = 0;
+        qty.value = 1;
+      }
+
+      async function addItem(){
+        const product_id = sel.value;
+        const q = Math.max(1, parseInt(qty.value||'1',10));
+        if(!product_id) return;
+        const data = await post("{% url 'sales:pos_add_item' %}", {product_id, quantity:q});
+        if(data.ok) render(data.state);
+      }
+
+      async function updateQty(tr){
+        const item_id = tr.dataset.id;
+        const q = Math.max(1, parseInt($('.qty', tr).value||'1',10));
+        const data = await post("{% url 'sales:pos_update_qty' %}", {item_id, quantity:q});
+        if(data.ok) render(data.state);
+      }
+
+      async function removeItem(tr){
+        const item_id = tr.dataset.id;
+        const data = await post("{% url 'sales:pos_remove_item' %}", {item_id});
+        if(data.ok) render(data.state);
+      }
+
+      btnAdd.addEventListener('click', addItem);
+      sel.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); addItem(); }});
+      qty.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); addItem(); }});
+
+      tbody.addEventListener('change', (e)=>{
+        if(e.target.classList.contains('qty')){
+          const tr = e.target.closest('tr');
+          updateQty(tr);
+        }
+      });
+      tbody.addEventListener('click', (e)=>{
+        if(e.target.classList.contains('btn-del')){
+          const tr = e.target.closest('tr');
+          removeItem(tr);
+        }
+      });
+
+      $('#btn-finish').addEventListener('click', async ()=>{
+        const r = await fetch("{% url 'sales:pos_finish' %}", {headers:{'X-Requested-With':'XMLHttpRequest','X-CSRFToken': getCSRF()}});
+        const data = await r.json();
+        if(data.ok && data.admin_url){ window.location.href = data.admin_url; }
+      });
+
+      sel.focus();
+    })();
+  </script>
+</body>
+</html>
