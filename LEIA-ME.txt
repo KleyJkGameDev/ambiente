@@ -1,0 +1,10 @@
+
+--> No arquivo ./core/settings.py:
+        na linha 82/83, ajustar o nome do banco de dados a depender se está usando o oficial ou o backup/cópia:
+        #'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': BASE_DIR / 'db-copy.sqlite3',
+
+--> No arquivo ./fluxo_analise_vendas.py:
+        na linha 37/38, ajustar nome do banco de dados a ser usado:
+        DB_PATH = r"./db-copy.sqlite3"          # <<< AJUSTE AQUI se necessário
+        OUT_DIR = r"./outputs"             # <<< AJUSTE AQUI se quiser outra pasta
