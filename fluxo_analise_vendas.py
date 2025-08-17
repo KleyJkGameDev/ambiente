@@ -9,6 +9,14 @@ Pipeline completo com:
 - Split temporal (treino = mais antigo; teste = mais recente)
 - Treino de modelo (XGBoost se disponível; fallback: GradientBoosting)
 - Métricas + figuras (correlação, importâncias, real vs previsto)
+
+>>> NOVO:
+- Análise de vendas MENSAIS (CSV + 4 gráficos intuitivos)
+  * Barras: faturamento por mês (com rótulos R$)
+  * Barras: unidades por mês (com rótulos)
+  * Linha: tendência com média móvel de 3 meses
+  * Barras: comparação ano a ano por mês (se houver >= 2 anos)
+
 Saídas em ./outputs
 """
 
@@ -21,6 +29,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import calendar
 from datetime import date, timedelta
 
 # XGBoost opcional; se não houver, usa GradientBoosting como fallback
@@ -34,8 +44,8 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 # ----------------------------- CONFIG -----------------------------
-DB_PATH = r"./db-copy.sqlite3"          # <<< AJUSTE AQUI se necessário
-OUT_DIR = r"./outputs"             # <<< AJUSTE AQUI se quiser outra pasta
+DB_PATH = r"./db-copy.sqlite3"         # <<< AJUSTE AQUI se necessário (caminho do seu banco)
+OUT_DIR = r"./outputs"                 # <<< AJUSTE AQUI se quiser outra pasta
 os.makedirs(OUT_DIR, exist_ok=True)
 
 CSV_JOINED = os.path.join(OUT_DIR, "sales_saleitem_joined_from_db.csv")
@@ -47,7 +57,29 @@ PNG_CORR   = os.path.join(OUT_DIR, "correlacao_heatmap.png")
 PNG_FIMP   = os.path.join(OUT_DIR, "feature_importances.png")
 PNG_AVP    = os.path.join(OUT_DIR, "actual_vs_pred.png")
 
+# >>> Novos arquivos da análise mensal
+CSV_MONTHLY         = os.path.join(OUT_DIR, "monthly_sales.csv")
+PNG_MONTHLY_REVENUE = os.path.join(OUT_DIR, "monthly_revenue_bar.png")
+PNG_MONTHLY_QTY     = os.path.join(OUT_DIR, "monthly_qty_bar.png")
+PNG_MONTHLY_TREND   = os.path.join(OUT_DIR, "monthly_revenue_trend.png")
+PNG_MONTHLY_YOY     = os.path.join(OUT_DIR, "monthly_yoy_comparison.png")
+
 TOP_K = 5  # top-N marcas e categorias para one-hot semanal
+
+
+# ----------------------- UTILS GERAIS -----------------------
+def fmt_brl(v: float) -> str:
+    """Formata valor numérico em BRL: R$ 12.345 (sem casas decimais)."""
+    s = f"{float(v):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {s}"
+
+
+def slugify(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[^\w]+", "_", s, flags=re.UNICODE)
+    s = re.sub(r"(^_+|_+$)", "", s)
+    return (s or "unknown")[:40]
+
 
 # ----------------------- UTIL: datas móveis BR ---------------------
 def easter_sunday(year: int) -> date:
@@ -89,11 +121,6 @@ def nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> date:
     first = d + timedelta(days=offset)
     return first + timedelta(weeks=n-1)
 
-def slugify(s: str) -> str:
-    s = s.lower()
-    s = re.sub(r"[^\w]+", "_", s, flags=re.UNICODE)
-    s = re.sub(r"(^_+|_+$)", "", s)
-    return (s or "unknown")[:40]
 
 # -------------------------- 1) EXPORTAÇÃO --------------------------
 def exportar_joinado(db_path: str, out_csv: str) -> pd.DataFrame:
@@ -128,6 +155,7 @@ def exportar_joinado(db_path: str, out_csv: str) -> pd.DataFrame:
 
     df.to_csv(out_csv, index=False)
     return df
+
 
 # --------------- 2) FEATURE ENGINEERING + EDA ----------------------
 def add_seasonality_flags_daily(daily: pd.DataFrame) -> pd.DataFrame:
@@ -169,6 +197,7 @@ def add_seasonality_flags_daily(daily: pd.DataFrame) -> pd.DataFrame:
         d.loc[mask_y & dd.between(nat_ini, nat_fim), "natal"] = 1
 
     return d
+
 
 def preparar_dados(df_joined: pd.DataFrame):
     df = df_joined.copy()
@@ -254,20 +283,16 @@ def preparar_dados(df_joined: pd.DataFrame):
     else:
         cat_cols = {}
 
-    # ---- Tratamento ROBUSTO dos dummies (EVITA KeyError) ----
+    # ---- Tratamento robusto dos dummies (evita KeyError) ----
     dummy_cols = list(brand_cols.values()) + list(cat_cols.values())
-
-    # 1) Cria explicitamente as colunas dummies que estiverem faltando
     for c in dummy_cols:
         if c not in weekly.columns:
             weekly[c] = 0.0
-
-    # 2) Só faz fillna nas colunas que existem no DataFrame
     existing = [c for c in dummy_cols if c in weekly.columns]
     if existing:
         weekly[existing] = weekly[existing].fillna(0.0)
 
-    # Salvar CSVs
+    # Salvar CSVs (auditoria)
     df.to_csv(CSV_LINE, index=False)
     daily.to_csv(CSV_DAILY, index=False)
     weekly.to_csv(CSV_WEEKLY, index=False)
@@ -293,6 +318,112 @@ def preparar_dados(df_joined: pd.DataFrame):
         "cat_dummy_cols": list(cat_cols.values())
     }
     return df, daily, weekly, meta
+
+
+# -------- NOVO: ANÁLISE MENSAL (gráficos intuitivos p/ leigos) -----
+def analise_vendas_mensais(daily: pd.DataFrame) -> pd.DataFrame:
+    """
+    Recebe agregado DIÁRIO e produz:
+      - monthly_sales.csv
+      - monthly_revenue_bar.png
+      - monthly_qty_bar.png
+      - monthly_revenue_trend.png
+      - monthly_yoy_comparison.png (se houver >= 2 anos)
+    """
+    if daily is None or daily.empty:
+        print("[!] Daily vazio — não foi possível gerar análise mensal.")
+        return pd.DataFrame()
+
+    d = daily.copy()
+    d["date"] = pd.to_datetime(d["date"])
+    d["ym"] = d["date"].dt.to_period("M").dt.to_timestamp()
+
+    monthly = (
+        d.groupby("ym", as_index=False)
+         .agg(total_revenue=("total_revenue", "sum"),
+              total_qty=("total_qty", "sum"),
+              num_items=("num_items", "sum"))
+         .sort_values("ym")
+    )
+    monthly.to_csv(CSV_MONTHLY, index=False)
+
+    # 1) Barras: faturamento por mês
+    plt.figure(figsize=(11, 5))
+    ax = plt.gca()
+    xlabels = monthly["ym"].dt.strftime("%Y-%m")
+    ax.bar(xlabels, monthly["total_revenue"])
+    ax.set_title("Faturamento por mês")
+    ax.set_xlabel("Mês")
+    ax.set_ylabel("Faturamento (R$)")
+    ax.tick_params(axis="x", rotation=45)
+    for i, v in enumerate(monthly["total_revenue"].values):
+        ax.text(i, v, fmt_brl(v), ha="center", va="bottom", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(PNG_MONTHLY_REVENUE, dpi=140)
+    plt.close()
+
+    # 2) Barras: quantidade por mês
+    plt.figure(figsize=(11, 5))
+    ax = plt.gca()
+    ax.bar(xlabels, monthly["total_qty"])
+    ax.set_title("Unidades vendidas por mês")
+    ax.set_xlabel("Mês")
+    ax.set_ylabel("Unidades")
+    ax.tick_params(axis="x", rotation=45)
+    for i, v in enumerate(monthly["total_qty"].values):
+        ax.text(i, v, f"{int(v):,}".replace(",", "."), ha="center", va="bottom", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(PNG_MONTHLY_QTY, dpi=140)
+    plt.close()
+
+    # 3) Tendência: linha + média móvel 3 meses
+    plt.figure(figsize=(11, 5))
+    ax = plt.gca()
+    ax.plot(monthly["ym"], monthly["total_revenue"], marker="o", label="Faturamento")
+    ax.plot(monthly["ym"], monthly["total_revenue"].rolling(3).mean(),
+            linestyle="--", label="Média móvel 3 meses")
+    ax.set_title("Tendência mensal do faturamento")
+    ax.set_xlabel("Mês")
+    ax.set_ylabel("Faturamento (R$)")
+    ax.legend()
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(PNG_MONTHLY_TREND, dpi=140)
+    plt.close()
+
+    # 4) Ano a ano (se houver >= 2 anos)
+    d["year"] = d["date"].dt.year
+    d["month"] = d["date"].dt.month
+    yoy = d.groupby(["year", "month"], as_index=False)["total_revenue"].sum()
+    anos = sorted(yoy["year"].unique())
+    if len(anos) >= 2:
+        ult2 = anos[-2:]
+        pvt = (yoy[yoy["year"].isin(ult2)]
+               .pivot(index="month", columns="year", values="total_revenue")
+               .sort_index())
+        idx = np.arange(len(pvt.index))
+        width = 0.35
+
+        plt.figure(figsize=(11, 5))
+        ax = plt.gca()
+        vals_a = pvt.get(ult2[0], pd.Series(index=pvt.index, dtype=float)).fillna(0).values
+        vals_b = pvt.get(ult2[1], pd.Series(index=pvt.index, dtype=float)).fillna(0).values
+        ax.bar(idx - width/2, vals_a, width, label=str(ult2[0]))
+        ax.bar(idx + width/2, vals_b, width, label=str(ult2[1]))
+        ax.set_xticks(idx)
+        ax.set_xticklabels([calendar.month_abbr[m].capitalize() for m in pvt.index])
+        ax.set_title("Faturamento por mês (comparação ano a ano)")
+        ax.set_xlabel("Mês")
+        ax.set_ylabel("Faturamento (R$)")
+        ax.legend(title="Ano")
+        plt.tight_layout()
+        plt.savefig(PNG_MONTHLY_YOY, dpi=140)
+        plt.close()
+
+    print(f"[OK] Análise mensal salva em: {CSV_MONTHLY}")
+    return monthly
+
 
 # --------- 3) FEATURES TEMPORAIS + SPLIT SEM VAZAMENTO ------------
 def criar_features_temporais(df_agg: pd.DataFrame, date_col: str, target_col: str, add_lags=True):
@@ -332,12 +463,14 @@ def criar_features_temporais(df_agg: pd.DataFrame, date_col: str, target_col: st
     y = d[target_col].copy()
     return X, y, d, features
 
+
 def split_temporal(X: pd.DataFrame, y: pd.Series, train_ratio=0.8):
     n = len(X)
     cut = max(1, int(n * train_ratio))
     X_train, X_test = X.iloc[:cut], X.iloc[cut:]
     y_train, y_test = y.iloc[:cut], y.iloc[cut:]
     return X_train, X_test, y_train, y_test
+
 
 # ----------------------- 4) MODELO + MÉTRICAS ----------------------
 def treinar_modelo(X_train, y_train):
@@ -361,13 +494,13 @@ def treinar_modelo(X_train, y_train):
     model.fit(X_train, y_train)
     return model
 
+
 def avaliar_modelo(model, X_test, y_test, features):
     if len(X_test) == 0:
         return {"warning": "Sem dados de teste para avaliar."}
 
     y_pred = model.predict(X_test)
-    #rmse = mean_squared_error(y_test, y_pred, squared=False)
-    # Compatibilidade com versões antigas do sklearn: some versions don't accept 'squared' kwarg
+    # Compatibilidade com versões diferentes do sklearn:
     try:
         rmse = mean_squared_error(y_test, y_pred, squared=False)
     except TypeError:
@@ -376,7 +509,7 @@ def avaliar_modelo(model, X_test, y_test, features):
     mae  = mean_absolute_error(y_test, y_pred)
     mape = (np.abs((y_test - y_pred) / np.maximum(np.abs(y_test), 1e-9)).mean()) * 100.0
 
-    # Real vs Previsto
+    # Real vs Previsto (ordem temporal)
     plt.figure(figsize=(9, 4))
     plt.plot(y_test.values, label="Real")
     plt.plot(y_pred, label="Previsto")
@@ -392,9 +525,9 @@ def avaliar_modelo(model, X_test, y_test, features):
     if hasattr(model, "feature_importances_"):
         imp = model.feature_importances_
         order = np.argsort(imp)[::-1]
-        plt.figure(figsize=(9, 5))
+        plt.figure(figsize=(11, 5))
         plt.bar(range(len(order)), imp[order])
-        plt.xticks(range(len(order)), np.array(features)[order], rotation=45, ha="right")
+        plt.xticks(range(len(order)), np.array(features)[order], rotation=60, ha="right")
         plt.title("Importância das Features")
         plt.tight_layout()
         plt.savefig(PNG_FIMP, dpi=140)
@@ -402,17 +535,19 @@ def avaliar_modelo(model, X_test, y_test, features):
 
     return {"rmse": rmse, "mae": mae, "mape": mape, "n_test": len(y_test)}
 
+
 # ------------------------------- MAIN ------------------------------
 if __name__ == "__main__":
     # 1) Exporta do SQLite para CSV joinado
     df_joined = exportar_joinado(DB_PATH, CSV_JOINED)
-    #df_joined = pd.read_csv('./sales_saleitem_synthetic_joined.csv')
 
     # 2) Prepara dados + flags sazonais + one-hot semanal
     df_line, df_daily, df_weekly, meta = preparar_dados(df_joined)
-    df_line, df_daily, df_weekly, meta = preparar_dados(df_joined)
 
-    # 3) Nível de previsão: semanal é mais estável em varejo
+    # 2.1) >>> NOVO: Análise mensal (gráficos fáceis de entender)
+    _ = analise_vendas_mensais(df_daily)
+
+    # 3) Nível de previsão: semanal (mais estável)
     base = df_weekly.rename(columns={"week_start": "date", "total_revenue": "y"})
 
     # 4) Cria features + split temporal (sem vazamento)
