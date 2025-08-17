@@ -34,7 +34,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 # ----------------------------- CONFIG -----------------------------
-DB_PATH = r"./db.sqlite3"          # <<< AJUSTE AQUI se necessário
+DB_PATH = r"./db-copy.sqlite3"          # <<< AJUSTE AQUI se necessário
 OUT_DIR = r"./outputs"             # <<< AJUSTE AQUI se quiser outra pasta
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -366,7 +366,13 @@ def avaliar_modelo(model, X_test, y_test, features):
         return {"warning": "Sem dados de teste para avaliar."}
 
     y_pred = model.predict(X_test)
-    rmse = mean_squared_error(y_test, y_pred, squared=False)
+    #rmse = mean_squared_error(y_test, y_pred, squared=False)
+    # Compatibilidade com versões antigas do sklearn: some versions don't accept 'squared' kwarg
+    try:
+        rmse = mean_squared_error(y_test, y_pred, squared=False)
+    except TypeError:
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
     mae  = mean_absolute_error(y_test, y_pred)
     mape = (np.abs((y_test - y_pred) / np.maximum(np.abs(y_test), 1e-9)).mean()) * 100.0
 
@@ -400,8 +406,10 @@ def avaliar_modelo(model, X_test, y_test, features):
 if __name__ == "__main__":
     # 1) Exporta do SQLite para CSV joinado
     df_joined = exportar_joinado(DB_PATH, CSV_JOINED)
+    #df_joined = pd.read_csv('./sales_saleitem_synthetic_joined.csv')
 
     # 2) Prepara dados + flags sazonais + one-hot semanal
+    df_line, df_daily, df_weekly, meta = preparar_dados(df_joined)
     df_line, df_daily, df_weekly, meta = preparar_dados(df_joined)
 
     # 3) Nível de previsão: semanal é mais estável em varejo
